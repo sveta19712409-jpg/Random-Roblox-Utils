@@ -1,0 +1,386 @@
+-- ============================================================
+-- AOTR Stealth | Универсальная версия (PC / Mobile / Tablet)
+-- ============================================================
+
+-- ЧАСТЬ 1: КЛЮЧ
+local REQUIRED_KEY = "AOTR_FOREVER_2026"
+getgenv().AOTR_KEY_OK = false
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+
+local keyGui = Instance.new("ScreenGui")
+keyGui.Name = "AOTR_KeyGui"
+keyGui.ResetOnSpawn = false
+keyGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local kframe = Instance.new("Frame")
+kframe.Size = UDim2.new(0, 280, 0, 150)
+kframe.Position = UDim2.new(0.5, -140, 0.5, -75)
+kframe.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+kframe.BorderSizePixel = 0
+kframe.Active = true
+kframe.Parent = keyGui
+
+local ktitle = Instance.new("TextLabel")
+ktitle.Size = UDim2.new(1, 0, 0, 30)
+ktitle.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+ktitle.BorderSizePixel = 0
+ktitle.Text = "AOTR Stealth — Ключ"
+ktitle.TextColor3 = Color3.fromRGB(0, 200, 100)
+ktitle.Font = Enum.Font.GothamBold
+ktitle.TextSize = 15
+ktitle.Parent = kframe
+
+local kbox = Instance.new("TextBox")
+kbox.Size = UDim2.new(1, -20, 0, 34)
+kbox.Position = UDim2.new(0, 10, 0, 42)
+kbox.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+kbox.BorderSizePixel = 0
+kbox.TextColor3 = Color3.fromRGB(255, 255, 255)
+kbox.PlaceholderText = "Введите ключ"
+kbox.Text = ""
+kbox.ClearTextOnFocus = false
+kbox.Font = Enum.Font.Gotham
+kbox.TextSize = 14
+kbox.Parent = kframe
+
+local kbtn = Instance.new("TextButton")
+kbtn.Size = UDim2.new(1, -20, 0, 34)
+kbtn.Position = UDim2.new(0, 10, 0, 84)
+kbtn.BackgroundColor3 = Color3.fromRGB(0, 100, 0)
+kbtn.BorderSizePixel = 0
+kbtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+kbtn.Font = Enum.Font.GothamBold
+kbtn.TextSize = 14
+kbtn.Text = "Подтвердить"
+kbtn.Parent = kframe
+
+local kstatus = Instance.new("TextLabel")
+kstatus.Size = UDim2.new(1, -20, 0, 22)
+kstatus.Position = UDim2.new(0, 10, 0, 122)
+kstatus.BackgroundTransparency = 1
+kstatus.TextColor3 = Color3.fromRGB(255, 80, 80)
+kstatus.Font = Enum.Font.Gotham
+kstatus.TextSize = 12
+kstatus.Text = ""
+kstatus.Parent = kframe
+
+local kattempts = 0
+kbtn.MouseButton1Click:Connect(function()
+    if kbox.Text == REQUIRED_KEY then
+        getgenv().AOTR_KEY_OK = true
+        keyGui:Destroy()
+    else
+        kattempts = kattempts + 1
+        kstatus.Text = "Неверный ключ (" .. kattempts .. ")"
+        kbox.Text = ""
+    end
+end)
+
+while not getgenv().AOTR_KEY_OK do
+    task.wait(0.2)
+end
+
+-- ЧАСТЬ 2: КОНФИГУРАЦИЯ
+local Config = {
+    MinSwingDelay = 0.40,
+    MaxSwingDelay = 0.75,
+    MinRetryDelay = 2.5,
+    MaxRetryDelay = 5.0,
+    MissionMinTime = 30,
+    MaxHitsPerSecond = 2,
+    RefillCooldown = 6,
+    NoHitTimeout = 2.5,
+}
+
+local KnownRemotes = {
+    Swing  = "SwingEvent",
+    Retry  = "RetryEvent",
+    Escape = "EscapeEvent",
+    Refill = "RefillEvent",
+}
+
+local function getRemote(name)
+    local r = ReplicatedStorage:FindFirstChild(name, true)
+    if r and (r:IsA("RemoteEvent") or r:IsA("RemoteFunction")) then
+        return r
+    end
+    return nil
+end
+
+local function jitter(min, max)
+    return min + math.random() * (max - min)
+end
+
+-- ЧАСТЬ 3: ПРОВЕРКА БАНА
+local function checkShadowBan()
+    local ok, res = pcall(function()
+        return Players:GetPlayerByUserId(LocalPlayer.UserId)
+    end)
+    return not (ok and res)
+end
+
+-- ЧАСТЬ 4: ТАЙМЕР
+local missionStartTime = tick()
+local function startMissionTimer() missionStartTime = tick() end
+local function isMissionSafeToLeave()
+    return (tick() - missionStartTime) >= Config.MissionMinTime
+end
+
+-- ЧАСТЬ 5: АВТО-УДАР
+local autoSwingEnabled = false
+local lastSwingTime = 0
+local swingCount = 0
+local secondStart = tick()
+local lastHitMark = tick()
+local function markHit() lastHitMark = tick() end
+
+task.spawn(function()
+    while true do
+        if autoSwingEnabled then
+            local now = tick()
+            if now - lastSwingTime >= jitter(Config.MinSwingDelay, Config.MaxSwingDelay) then
+                if now - secondStart >= 1 then
+                    swingCount = 0
+                    secondStart = now
+                end
+                if swingCount < Config.MaxHitsPerSecond then
+                    local r = getRemote(KnownRemotes.Swing)
+                    if r then
+                        pcall(function()
+                            if r:IsA("RemoteEvent") then r:FireServer()
+                            else r:InvokeServer() end
+                        end)
+                        markHit()
+                    end
+                    swingCount = swingCount + 1
+                    lastSwingTime = now
+                end
+            end
+        end
+        task.wait(0.05)
+    end
+end)
+
+-- ЧАСТЬ 6: АВТО-ПОВТОР
+local autoRetryEnabled = false
+
+task.spawn(function()
+    while true do
+        if autoRetryEnabled and isMissionSafeToLeave() then
+            local r = getRemote(KnownRemotes.Retry)
+            if r then
+                pcall(function()
+                    if r:IsA("RemoteEvent") then r:FireServer()
+                    else r:InvokeServer() end
+                end)
+            end
+            task.wait(jitter(Config.MinRetryDelay, Config.MaxRetryDelay))
+        else
+            task.wait(0.5)
+        end
+    end
+end)
+
+-- ЧАСТЬ 7: АВТО-ПОПОЛНЕНИЕ КЛИНКОВ
+local autoRefillEnabled = true
+local lastRefillAttempt = 0
+
+task.spawn(function()
+    while true do
+        if autoRefillEnabled and autoSwingEnabled then
+            local idle = tick() - lastHitMark
+            local sinceRefill = tick() - lastRefillAttempt
+            if idle > Config.NoHitTimeout and sinceRefill > Config.RefillCooldown then
+                local r = getRemote(KnownRemotes.Refill)
+                if r then
+                    pcall(function()
+                        if r:IsA("RemoteEvent") then r:FireServer()
+                        else r:InvokeServer() end
+                    end)
+                    lastRefillAttempt = tick()
+                    markHit()
+                end
+            end
+        end
+        task.wait(0.5)
+    end
+end)
+
+-- ЧАСТЬ 8: УНИВЕРСАЛЬНЫЙ GUI
+if getgenv().AOTR_Stealth then
+    getgenv().AOTR_Stealth:Destroy()
+end
+
+local isTouch = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+local BTN_SIZE = isTouch and 46 or 34
+local PANEL_W = isTouch and 240 or 240
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "AOTR_Stealth"
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+getgenv().AOTR_Stealth = gui
+
+-- КНОПКА-ПЕРЕКЛЮЧАТЕЛЬ (всегда видна)
+local toggle = Instance.new("TextButton")
+toggle.Size = UDim2.new(0, BTN_SIZE, 0, BTN_SIZE)
+toggle.Position = UDim2.new(0, 12, 0, 80)
+toggle.BackgroundColor3 = Color3.fromRGB(0, 100, 0)
+toggle.BorderSizePixel = 0
+toggle.Text = "A"
+toggle.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggle.Font = Enum.Font.GothamBold
+toggle.TextSize = isTouch and 20 or 16
+toggle.AutoButtonColor = false
+toggle.Active = true
+toggle.Parent = gui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 8)
+corner.Parent = toggle
+
+-- ПАНЕЛЬ
+local panel = Instance.new("Frame")
+panel.Size = UDim2.new(0, PANEL_W, 0, isTouch and 340 or 320)
+panel.Position = UDim2.new(0, 12, 0, 80 + BTN_SIZE + 6)
+panel.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+panel.BorderSizePixel = 0
+panel.Visible = false
+panel.Parent = gui
+
+local pCorner = Instance.new("UICorner")
+pCorner.CornerRadius = UDim.new(0, 8)
+pCorner.Parent = panel
+
+local ptitle = Instance.new("TextLabel")
+ptitle.Size = UDim2.new(1, 0, 0, 30)
+ptitle.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+ptitle.BorderSizePixel = 0
+ptitle.Text = "  AOTR Stealth"
+ptitle.TextXAlignment = Enum.TextXAlignment.Left
+ptitle.TextColor3 = Color3.fromRGB(0, 200, 100)
+ptitle.Font = Enum.Font.GothamBold
+ptitle.TextSize = 14
+ptitle.Parent = panel
+
+local tCorner = Instance.new("UICorner")
+tCorner.CornerRadius = UDim.new(0, 8)
+tCorner.Parent = ptitle
+
+-- Переключение панели
+local panelOpen = false
+local function setPanel(v)
+    panelOpen = v
+    panel.Visible = v
+    toggle.BackgroundColor3 = v and Color3.fromRGB(0, 140, 60) or Color3.fromRGB(0, 100, 0)
+end
+toggle.MouseButton1Click:Connect(function() setPanel(not panelOpen) end)
+
+-- Перетаскивание кнопки (работает и на тач, и на мышь)
+local dragging, dragStart, startPos
+toggle.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = toggle.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+    or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - dragStart
+        toggle.Position = UDim2.new(0,
+            startPos.X.Offset + delta.X,
+            0, startPos.Y.Offset + delta.Y)
+        panel.Position = UDim2.new(0,
+            toggle.Position.X.Offset,
+            0, toggle.Position.Y.Offset + BTN_SIZE + 6)
+    end
+end)
+
+-- Тумблеры
+local ROW_H = isTouch and 40 or 34
+local function makeToggle(text, y, callback)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, -16, 0, ROW_H - 6)
+    btn.Position = UDim2.new(0, 8, 0, y)
+    btn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    btn.BorderSizePixel = 0
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.Font = Enum.Font.Gotham
+    btn.TextSize = isTouch and 14 or 13
+    btn.Text = text .. "  [ВЫКЛ]"
+    btn.Parent = panel
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, 6)
+    c.Parent = btn
+
+    local enabled = false
+    btn.MouseButton1Click:Connect(function()
+        enabled = not enabled
+        btn.Text = text .. (enabled and "  [ВКЛ]" or "  [ВЫКЛ]")
+        btn.BackgroundColor3 = enabled and Color3.fromRGB(0, 110, 50) or Color3.fromRGB(40, 40, 40)
+        callback(enabled)
+    end)
+end
+
+makeToggle("Авто-удар", 36, function(v)
+    autoSwingEnabled = v
+    if v then startMissionTimer(); markHit() end
+end)
+makeToggle("Авто-повтор", 36 + ROW_H, function(v)
+    autoRetryEnabled = v
+    if v then startMissionTimer() end
+end)
+makeToggle("Авто-пополнение клинков", 36 + ROW_H * 2, function(v)
+    autoRefillEnabled = v
+end)
+
+-- Кнопка проверки бана
+local banBtn = Instance.new("TextButton")
+banBtn.Size = UDim2.new(1, -16, 0, ROW_H - 6)
+banBtn.Position = UDim2.new(0, 8, 0, 36 + ROW_H * 3)
+banBtn.BackgroundColor3 = Color3.fromRGB(60, 40, 40)
+banBtn.BorderSizePixel = 0
+banBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+banBtn.Font = Enum.Font.Gotham
+banBtn.TextSize = isTouch and 14 or 13
+banBtn.Text = "Проверить теневой бан"
+banBtn.Parent = panel
+local bc = Instance.new("UICorner")
+bc.CornerRadius = UDim.new(0, 6)
+bc.Parent = banBtn
+
+banBtn.MouseButton1Click:Connect(function()
+    banBtn.Text = checkShadowBan() and "⚠ Возможен бан" or "✓ Чисто"
+end)
+
+-- Инфо
+local info = Instance.new("TextLabel")
+info.Size = UDim2.new(1, -16, 0, 80)
+info.Position = UDim2.new(0, 8, 0, 36 + ROW_H * 4)
+info.BackgroundTransparency = 1
+info.TextColor3 = Color3.fromRGB(160, 160, 160)
+info.Font = Enum.Font.Gotham
+info.TextSize = isTouch and 11 or 10
+info.TextWrapped = true
+info.TextXAlignment = Enum.TextXAlignment.Left
+info.TextYAlignment = Enum.TextYAlignment.Top
+info.Text = "Лимит: " .. Config.MaxHitsPerSecond .. " уд/сек\n"
+    .. "Миссия: " .. Config.MissionMinTime .. " сек\n"
+    .. "Рефилл: " .. Config.RefillCooldown .. " сек\n"
+    .. "Задержки рандомизированы"
+info.Parent = panel
+
+print("[AOTR Stealth] Готово")
